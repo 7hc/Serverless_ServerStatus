@@ -60,6 +60,10 @@ async function handleAPIRequest(request, path) {
   if (path === "/api/servers" && request.method === "GET") {
     return handleGetServers();
   }
+  // 获取所有服务器的最新状态
+  if (path === "/api/servers/status" && request.method === "GET") {
+    return handleGetAllServerStatus();
+  }
 
   // 获取指定服务器的最新状态
   if (
@@ -177,19 +181,45 @@ function validateReportData(data) {
 }
 
 /**
+ * 获取最近的10分钟整点时间戳（毫秒级）
+ * @param {number} timestamp - 原始毫秒时间戳
+ * @returns {number} 最近的10分钟整点时间戳
+ */
+function getNearestTenMinutes(timestamp) {
+    // 10分钟对应的毫秒数 (10 * 60 * 1000)
+    const tenMinutes = 600000;
+    // 向下取整到最近的10分钟
+    return Math.floor(timestamp / tenMinutes) * tenMinutes;
+}
+
+/**
  * 存储服务器数据到KV
  */
 async function storeServerData(data) {
   const serverId = data.server_id;
   const timestamp = data.timestamp * 1000; // 转换为毫秒
+  const nearestTenMinutes = getNearestTenMinutes(timestamp);
+  data.timestamp = timestamp/1000;
+
+  // 获取储存状态
+  const history = await SERVER_STATUS.get(`history:${serverId}:${nearestTenMinutes}`, {
+    type: "json",
+  });
+  let newHistory = [];
+  // 检查是否存在
+  if (history) {
+    newHistory.push(...history, data)
+  } else {
+    newHistory.push(data)
+  }
 
   // 存储最新状态
   await SERVER_STATUS.put(`status:${serverId}`, JSON.stringify(data));
 
   // 存储历史数据
   await SERVER_STATUS.put(
-    `history:${serverId}:${timestamp}`,
-    JSON.stringify(data)
+    `history:${serverId}:${nearestTenMinutes}`,
+    JSON.stringify(newHistory)
   );
 
   // 更新服务器列表
@@ -279,6 +309,55 @@ async function handleGetServers() {
 }
 
 /**
+ * 处理获取所有服务器最新状态
+ */
+async function handleGetAllServerStatus() {
+  try {
+    // 获取服务器列表
+    const serversList = await SERVER_STATUS.get("servers_list", {
+      type: "json",
+    });
+
+    if (!serversList) {
+      return new Response(JSON.stringify([]), {
+        headers: {
+          "Content-Type": "application/json",
+          ...CONFIG.CORS_HEADERS,
+        },
+      });
+    }
+
+    let statusList = [];
+
+    for(const server of serversList){
+      // 获取服务器最新状态
+      const status = await SERVER_STATUS.get(`status:${server.id}`, {
+        type: "json",
+      });
+
+      if (status) {
+        statusList.push(status);
+      }
+    }
+
+    return new Response(JSON.stringify(statusList), {
+      headers: {
+        "Content-Type": "application/json",
+        ...CONFIG.CORS_HEADERS,
+      },
+    });
+  } catch (error) {
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: {
+        "Content-Type": "application/json",
+        ...CONFIG.CORS_HEADERS,
+      },
+    });
+  }
+}
+
+/**
  * 处理获取服务器状态请求
  */
 async function handleGetServerStatus(serverId) {
@@ -351,7 +430,10 @@ async function handleGetServerHistory(serverId, startParam, endParam) {
       return data;
     });
 
-    const historyData = await Promise.all(historyPromises);
+    const historyArrays = await Promise.all(historyPromises);
+
+    // 将二维数组扁平化为一维数组
+    const historyData = historyArrays.flat(); 
 
     // 按时间戳排序
     historyData.sort((a, b) => a.timestamp - b.timestamp);

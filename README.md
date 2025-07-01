@@ -1,3 +1,5 @@
+> 最新版本v0.0.2
+
 # 服务器探针Monitor端 - Serverless版
 
 使用Cloudflare Workers和Cloudflare KV实现。
@@ -76,3 +78,11 @@ GET /api/servers/{server_id}/history?start={timestamp}&end={timestamp}
 - end: 结束时间戳（毫秒）
 
 返回指定时间范围内的历史数据数组。
+
+### 5. 查询所有服务器最新状态
+
+```
+GET /api/servers/status
+```
+
+返回最新的监控数据组成的列表。
